@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import List, Tuple
+from typing import Iterable, List, Tuple
 
 from .config import settings
 from .ingest import build_indexes
@@ -22,6 +22,15 @@ def _format_sources(chunks: List[RetrievedChunk]) -> str:
     return "\n".join(lines)
 
 
+def _emit_stream(stream: Iterable[str]) -> str:
+    parts: List[str] = []
+    for token in stream:
+        parts.append(token)
+        print(token, end="", flush=True)
+    print()
+    return "".join(parts)
+
+
 def handle_ingest() -> int:
     stats = build_indexes()
     print(f"Indexed {stats.file_count} files into {stats.chunk_count} chunks.")
@@ -30,10 +39,10 @@ def handle_ingest() -> int:
 
 def handle_query(question: str) -> int:
     agent = RAGAgent()
-    response = agent.answer(question)
-    print(response.answer)
+    stream, chunks = agent.answer_stream(question)
+    _emit_stream(stream)
     print()
-    print(_format_sources(response.chunks))
+    print(_format_sources(chunks))
     return 0
 
 
@@ -51,11 +60,11 @@ def handle_chat() -> int:
             break
         if not question:
             continue
-        response = agent.answer(question, history=history[-settings.history_max_turns :])
-        print(response.answer)
-        print(_format_sources(response.chunks))
+        stream, chunks = agent.answer_stream(question, history=history[-settings.history_max_turns :])
+        answer = _emit_stream(stream)
+        print(_format_sources(chunks))
         print()
-        history.append((question, response.answer))
+        history.append((question, answer))
     return 0
 
 

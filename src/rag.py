@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import Iterable, List, Sequence, Tuple
 
 from langchain_openai import ChatOpenAI
 
@@ -71,3 +71,27 @@ class RAGAgent:
         )
         response = self.llm.invoke(prompt)
         return RAGResponse(answer=response.content, chunks=reranked)
+
+    def answer_stream(
+        self, question: str, history: Sequence[Tuple[str, str]] | None = None
+    ) -> Tuple[Iterable[str], List[RetrievedChunk]]:
+        history = history or []
+        retrieved = self.retriever.retrieve(question)
+        reranked = self.reranker.rerank(question, retrieved)
+        context = _format_context(reranked)
+        history_text = _format_history(history)
+
+        prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"Context:\n{context}\n\n"
+            f"Conversation:\n{history_text}\n\n"
+            f"Question: {question}\nAnswer:"
+        )
+        stream = self.llm.stream(prompt)
+
+        def _iter_tokens() -> Iterable[str]:
+            for chunk in stream:
+                if chunk.content:
+                    yield chunk.content
+
+        return _iter_tokens(), reranked
