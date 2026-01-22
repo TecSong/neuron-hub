@@ -77,6 +77,34 @@ class HybridRetriever:
             return {key: 1.0 for key in scores}
         return {key: (value - min_score) / (max_score - min_score) for key, value in scores.items()}
 
+    def _jaccard_similarity(self, left: set[str], right: set[str]) -> float:
+        if not left or not right:
+            return 0.0
+        intersection = left.intersection(right)
+        union = left.union(right)
+        if not union:
+            return 0.0
+        return len(intersection) / len(union)
+
+    def _deduplicate(self, chunks: List[RetrievedChunk]) -> List[RetrievedChunk]:
+        threshold = settings.dedup_similarity_threshold
+        if threshold <= 0.0:
+            return chunks
+        unique: List[RetrievedChunk] = []
+        token_sets: List[set[str]] = []
+        for chunk in chunks:
+            tokens = set(simple_tokenize(chunk.record.text))
+            is_duplicate = False
+            for existing_tokens in token_sets:
+                if self._jaccard_similarity(tokens, existing_tokens) >= threshold:
+                    is_duplicate = True
+                    print(f"Duplicate chunk: {chunk.record.chunk_id}")
+                    break
+            if not is_duplicate:
+                unique.append(chunk)
+                token_sets.append(tokens)
+        return unique
+
     def _vector_search(self, query: str) -> Dict[int, float]:
         results = self.vector_store.similarity_search_with_score(query, k=settings.vector_top_n)
         scores: Dict[int, float] = {}
@@ -123,4 +151,5 @@ class HybridRetriever:
             )
 
         fused.sort(key=lambda item: item.fused_score, reverse=True)
-        return fused[: settings.top_k]
+        deduped = self._deduplicate(fused)
+        return deduped[: settings.top_k]

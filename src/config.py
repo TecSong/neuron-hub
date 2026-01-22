@@ -52,6 +52,7 @@ class Settings:
     vector_top_n: int
     bm25_top_n: int
     top_k: int
+    dedup_similarity_threshold: float
     vector_weight: float
     bm25_weight: float
     temperature: float
@@ -101,6 +102,7 @@ class Settings:
             vector_top_n=_get_env_int("VECTOR_TOP_N", 8),
             bm25_top_n=_get_env_int("BM25_TOP_N", 8),
             top_k=_get_env_int("TOP_K", 4),
+            dedup_similarity_threshold=_get_env_float("DEDUP_SIMILARITY_THRESHOLD", 0.85),
             vector_weight=vector_weight,
             bm25_weight=bm25_weight,
             temperature=_get_env_float("TEMPERATURE", 0.2),

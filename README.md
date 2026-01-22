@@ -111,6 +111,7 @@ Key settings in `.env`:
 | `VECTOR_TOP_N` | Vector search results | `8` |
 | `BM25_TOP_N` | BM25 search results | `8` |
 | `TOP_K` | Final results after reranking | `20` |
+| `DEDUP_SIMILARITY_THRESHOLD` | Retrieval dedup similarity threshold | `0.85` |
 | `TEMPERATURE` | LLM sampling temperature | `0.2` |
 
 See `.env.example` for all available options.
