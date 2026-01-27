@@ -11,3 +11,4 @@ python-dotenv>=1.0.1
 pydantic>=2.7.0
 tiktoken>=0.7.0
 jieba>=0.42.1
+websockets>=12.0

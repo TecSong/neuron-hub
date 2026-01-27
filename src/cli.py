@@ -7,6 +7,7 @@ from typing import Iterable, List, Tuple
 from .config import settings
 from .ingest import build_indexes
 from .rag import RAGAgent
+from .ws_server import serve as serve_ws
 from .types import RetrievedChunk
 
 
@@ -68,6 +69,12 @@ def handle_chat() -> int:
     return 0
 
 
+def handle_serve(host: str, port: int) -> int:
+    print(f"WebSocket server listening on ws://{host}:{port}")
+    serve_ws(host, port)
+    return 0
+
+
 def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RAG CLI with hybrid retrieval and rerank")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -79,6 +86,10 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     query_parser.add_argument("--question", dest="question_opt", help="Question to answer")
 
     subparsers.add_parser("chat", help="Start interactive chat")
+
+    serve_parser = subparsers.add_parser("serve", help="Start WebSocket server")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port")
 
     return parser.parse_args(argv)
 
@@ -96,6 +107,8 @@ def main(argv: List[str] | None = None) -> int:
             return handle_query(question)
         if args.command == "chat":
             return handle_chat()
+        if args.command == "serve":
+            return handle_serve(args.host, args.port)
 
         raise ValueError("Unknown command.")
     except Exception as exc:
