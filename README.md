@@ -97,6 +97,19 @@ python -m src.cli chat
 
 Chat mode maintains conversation history and allows follow-up questions.
 
+#### 3. Web UI (FastAPI + React)
+
+Start the web console and open the URL in your browser:
+
+```bash
+python -m src.cli web
+```
+
+The UI includes:
+- KB configuration management (create/edit/activate profiles)
+- One-click ingestion for the active profile
+- WebSocket chat page for streaming answers
+
 ## ⚙️ Configuration
 
 Key settings in `.env`:

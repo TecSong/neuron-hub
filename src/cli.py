@@ -75,6 +75,14 @@ def handle_serve(host: str, port: int) -> int:
     return 0
 
 
+def handle_web(host: str, port: int) -> int:
+    from .web_app import run
+
+    print(f"Web app listening on http://{host}:{port}")
+    run(host, port)
+    return 0
+
+
 def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RAG CLI with hybrid retrieval and rerank")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -90,6 +98,10 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     serve_parser = subparsers.add_parser("serve", help="Start WebSocket server")
     serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
     serve_parser.add_argument("--port", type=int, default=8000, help="Bind port")
+
+    web_parser = subparsers.add_parser("web", help="Start FastAPI web UI")
+    web_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    web_parser.add_argument("--port", type=int, default=5001, help="Bind port")
 
     return parser.parse_args(argv)
 
@@ -109,6 +121,8 @@ def main(argv: List[str] | None = None) -> int:
             return handle_chat()
         if args.command == "serve":
             return handle_serve(args.host, args.port)
+        if args.command == "web":
+            return handle_web(args.host, args.port)
 
         raise ValueError("Unknown command.")
     except Exception as exc:
