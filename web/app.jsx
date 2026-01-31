@@ -383,8 +383,29 @@ function ChatPanel({ activeConfig }) {
   const [turns, setTurns] = useState([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
+  const pendingSourcesRef = useRef(null);
   const wsRef = useRef(null);
   const pendingQuestionRef = useRef(null);
+  const inlineSourcesFromContent = (content) => {
+    if (!content) return null;
+    const marker = "Sources:";
+    const idx = content.indexOf(marker);
+    if (idx === -1) return null;
+    const tail = content.slice(idx + marker.length).trim();
+    if (!tail) return null;
+    const parts = tail
+      .split("|")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (!parts.length) return null;
+    return {
+      text: content.slice(0, idx).trimEnd(),
+      sources: parts.map((source, index) => ({
+        source,
+        chunk_id: `inline-${index}`,
+      })),
+    };
+  };
 
   useEffect(() => {
     let active = true;
@@ -451,6 +472,21 @@ function ChatPanel({ activeConfig }) {
               return next;
             });
           }
+          if (payload.type === "sources") {
+            setMessages((prev) => {
+              const next = [...prev];
+              const lastIndex = next.length - 1;
+              if (lastIndex >= 0 && next[lastIndex].role === "assistant") {
+                next[lastIndex] = {
+                  ...next[lastIndex],
+                  sources: payload.sources || [],
+                };
+                return next;
+              }
+              pendingSourcesRef.current = payload.sources || [];
+              return next;
+            });
+          }
           if (payload.type === "done") {
             setMessages((prev) => {
               const next = [...prev];
@@ -459,7 +495,7 @@ function ChatPanel({ activeConfig }) {
                 next[lastIndex] = {
                   ...next[lastIndex],
                   content: payload.answer,
-                  sources: payload.sources || [],
+                  sources: payload.sources || next[lastIndex].sources || [],
                 };
               }
               return next;
@@ -505,8 +541,9 @@ function ChatPanel({ activeConfig }) {
     setMessages((prev) => [
       ...prev,
       { role: "user", content: question },
-      { role: "assistant", content: "" },
+      { role: "assistant", content: "", sources: pendingSourcesRef.current || [] },
     ]);
+    pendingSourcesRef.current = null;
     wsRef.current.send(
       JSON.stringify({ question, history: turns, return_sources: true })
     );
@@ -524,16 +561,33 @@ function ChatPanel({ activeConfig }) {
       <div className="chat-window">
         {messages.map((message, index) => (
           <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
-            {message.content || "..."}
-            {message.sources && message.sources.length > 0 && (
-              <small>
-                Sources:{" "}
-                {message.sources
-                  .slice(0, 3)
-                  .map((source) => source.source)
-                  .join(" | ")}
-              </small>
-            )}
+            {(() => {
+              const inline = inlineSourcesFromContent(message.content);
+              const content = inline ? inline.text : message.content;
+              const sources = message.sources?.length
+                ? message.sources
+                : inline?.sources || [];
+              return (
+                <>
+                  {content || "..."}
+                  {sources.length > 0 && (
+                    <div className="sources">
+                      <div className="sources-title">Sources</div>
+                      <ul>
+                        {sources.slice(0, 5).map((source, idx) => (
+                          <li key={`${source.chunk_id}-${idx}`}>
+                            <span className="source-path">{source.source}</span>
+                            {source.chunk_id !== undefined && source.chunk_id !== null && (
+                              <span className="source-meta">chunk {source.chunk_id}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         ))}
         {!messages.length && (

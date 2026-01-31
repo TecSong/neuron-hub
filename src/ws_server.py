@@ -28,6 +28,8 @@ async def _stream_answer(
     def _worker() -> None:
         try:
             stream, chunks = agent.answer_stream(question, history=history)
+            if return_sources:
+                loop.call_soon_threadsafe(queue.put_nowait, ("sources", chunks))
             for token in stream:
                 loop.call_soon_threadsafe(queue.put_nowait, ("token", token))
             loop.call_soon_threadsafe(queue.put_nowait, ("done", chunks))
@@ -42,6 +44,10 @@ async def _stream_answer(
             if kind == "token":
                 answer_parts.append(payload)
                 await websocket.send(json.dumps({"type": "token", "content": payload}))
+            elif kind == "sources":
+                await websocket.send(
+                    json.dumps({"type": "sources", "sources": [serialize_chunk(c) for c in payload]})
+                )
             elif kind == "done":
                 response: Dict[str, Any] = {
                     "type": "done",

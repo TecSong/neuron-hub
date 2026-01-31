@@ -222,6 +222,7 @@ textarea {
   padding: 14px 16px;
   border-radius: 16px;
   animation: fadeUp 0.4s ease both;
+  white-space: pre-wrap;
 }
 
 .message.user {
@@ -238,6 +239,43 @@ textarea {
   display: block;
   color: var(--muted);
   margin-top: 6px;
+}
+
+.sources {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(22, 22, 22, 0.04);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sources-title {
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.sources ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.sources li {
+  display: grid;
+  gap: 2px;
+}
+
+.source-path {
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.source-meta {
+  color: var(--muted);
 }
 
 .chat-input {
