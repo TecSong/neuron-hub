@@ -383,9 +383,26 @@ function ChatPanel({ activeConfig }) {
   const [turns, setTurns] = useState([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
+  const [contextUsage, setContextUsage] = useState(null);
   const pendingSourcesRef = useRef(null);
   const wsRef = useRef(null);
   const pendingQuestionRef = useRef(null);
+  const formatPercent = (value) =>
+    Number.isFinite(value) ? `${value.toFixed(1)}%` : "N/A";
+  const formatK = (value) =>
+    Number.isFinite(value) ? `${(value / 1000).toFixed(1)}K` : "N/A";
+  const contextWindow = contextUsage?.context_window_tokens;
+  const remainingTokens =
+    contextUsage?.remaining_tokens ?? contextUsage?.remaining_tokens_estimate;
+  const usedTokens =
+    contextUsage?.total_tokens ??
+    (Number.isFinite(contextWindow) && Number.isFinite(remainingTokens)
+      ? contextWindow - remainingTokens
+      : null);
+  const usagePercent =
+    Number.isFinite(contextWindow) && Number.isFinite(usedTokens) && contextWindow > 0
+      ? (usedTokens / contextWindow) * 100
+      : null;
   const inlineSourcesFromContent = (content) => {
     if (!content) return null;
     const marker = "Sources:";
@@ -500,6 +517,9 @@ function ChatPanel({ activeConfig }) {
               }
               return next;
             });
+            if (payload.usage) {
+              setContextUsage(payload.usage);
+            }
             if (pendingQuestionRef.current) {
               setTurns((prev) => [
                 ...prev,
@@ -555,7 +575,10 @@ function ChatPanel({ activeConfig }) {
       <h2>Chat Workspace</h2>
       <p className="status">
         {connected ? "Connected" : connecting ? "Connecting" : "Disconnected"} | Active KB:{" "}
-        {activeConfig?.name || "None"} | WS: {wsUrl || "Not set"}
+        {activeConfig?.name || "None"} | WS: {wsUrl || "Not set"} | Context:{" "}
+        {contextUsage
+          ? `${formatK(contextWindow)} total, ${formatPercent(usagePercent)} used`
+          : "N/A"}
       </p>
       {error && <div className="status">{error}</div>}
       <div className="chat-window">

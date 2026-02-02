@@ -126,6 +126,7 @@ Key settings in `.env`:
 | `TOP_K` | Final results after reranking | `20` |
 | `DEDUP_SIMILARITY_THRESHOLD` | Retrieval dedup similarity threshold | `0.85` |
 | `TEMPERATURE` | LLM sampling temperature | `0.2` |
+| `CONTEXT_WINDOW_TOKENS` | LLM context window size | `32768` |
 
 See `.env.example` for all available options.
 

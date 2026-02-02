@@ -85,6 +85,7 @@ class Settings:
     bm25_weight: float
     temperature: float
     max_tokens: int
+    context_window_tokens: int
     history_max_turns: int
     supported_extensions: tuple[str, ...]
 
@@ -178,6 +179,7 @@ class Settings:
             bm25_weight=bm25_weight,
             temperature=_get_env_float("TEMPERATURE", 0.2),
             max_tokens=_get_env_int("MAX_TOKENS", 512),
+            context_window_tokens=_get_env_int("CONTEXT_WINDOW_TOKENS", 32768),
             history_max_turns=_get_env_int("HISTORY_MAX_TURNS", 5),
             supported_extensions=(".txt", ".md"),
         )

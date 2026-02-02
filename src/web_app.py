@@ -19,9 +19,27 @@ from .config import settings
 from .config_store import get_active_config, load_store, save_store
 from .ingest import build_indexes
 from .ws_protocol import coerce_history, parse_payload, serialize_chunk
+from .utils import get_token_counter
 
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+_TOKEN_COUNTER = get_token_counter()
+
+
+def _finalize_usage(usage: Dict[str, Any], answer: str) -> Dict[str, Any]:
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    context_window = int(usage.get("context_window_tokens") or 0)
+    estimated_remaining = usage.get("remaining_tokens")
+    completion_tokens = int(_TOKEN_COUNTER(answer))
+    total_tokens = prompt_tokens + completion_tokens
+    updated = dict(usage)
+    updated["completion_tokens"] = completion_tokens
+    updated["total_tokens"] = total_tokens
+    if estimated_remaining is not None:
+        updated["remaining_tokens_estimate"] = int(estimated_remaining)
+    if context_window:
+        updated["remaining_tokens"] = max(context_window - total_tokens, 0)
+    return updated
 
 
 def _now_iso() -> str:
@@ -144,12 +162,14 @@ async def _stream_answer(
     def _worker() -> None:
         try:
             agent = agent_manager.get_agent()
-            stream, chunks = agent.answer_stream(question, history=history)
+            stream, chunks, usage = agent.answer_stream(question, history=history)
             if return_sources:
                 loop.call_soon_threadsafe(queue.put_nowait, ("sources", chunks))
             for token in stream:
                 loop.call_soon_threadsafe(queue.put_nowait, ("token", token))
-            loop.call_soon_threadsafe(queue.put_nowait, ("done", chunks))
+            loop.call_soon_threadsafe(
+                queue.put_nowait, ("done", {"chunks": chunks, "usage": usage})
+            )
         except Exception as exc:
             loop.call_soon_threadsafe(queue.put_nowait, ("error", str(exc)))
 
@@ -165,9 +185,14 @@ async def _stream_answer(
                 json.dumps({"type": "sources", "sources": [serialize_chunk(c) for c in payload]})
             )
         elif kind == "done":
-            response: Dict[str, Any] = {"type": "done", "answer": "".join(answer_parts)}
+            chunks = payload.get("chunks", [])
+            answer = "".join(answer_parts)
+            response: Dict[str, Any] = {"type": "done", "answer": answer}
+            usage = payload.get("usage")
+            if usage:
+                response["usage"] = _finalize_usage(usage, answer)
             if return_sources:
-                response["sources"] = [serialize_chunk(chunk) for chunk in payload]
+                response["sources"] = [serialize_chunk(chunk) for chunk in chunks]
             await websocket.send_text(json.dumps(response))
             break
         elif kind == "error":
