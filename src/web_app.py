@@ -18,6 +18,7 @@ from .agent_manager import AgentManager
 from .config import settings
 from .config_store import get_active_config, load_store, save_store
 from .ingest import build_indexes
+from .session_store import append_event, ensure_session, list_sessions, new_session_id
 from .ws_protocol import coerce_history, parse_payload, serialize_chunk
 from .utils import get_token_counter
 
@@ -154,6 +155,7 @@ async def _stream_answer(
     question: str,
     history: list[tuple[str, str]],
     return_sources: bool,
+    session_id: str,
 ) -> None:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -187,15 +189,44 @@ async def _stream_answer(
         elif kind == "done":
             chunks = payload.get("chunks", [])
             answer = "".join(answer_parts)
+            sources_payload = [serialize_chunk(chunk) for chunk in chunks] if return_sources else []
             response: Dict[str, Any] = {"type": "done", "answer": answer}
             usage = payload.get("usage")
-            if usage:
-                response["usage"] = _finalize_usage(usage, answer)
+            finalized_usage = _finalize_usage(usage, answer) if usage else None
+            if finalized_usage:
+                response["usage"] = finalized_usage
             if return_sources:
-                response["sources"] = [serialize_chunk(chunk) for chunk in chunks]
+                response["sources"] = sources_payload
+            response["session_id"] = session_id
+            try:
+                append_event(
+                    session_id,
+                    {
+                        "session_id": session_id,
+                        "ts": _now_iso(),
+                        "type": "assistant",
+                        "content": answer,
+                        "sources": sources_payload,
+                        "usage": finalized_usage,
+                    },
+                )
+            except Exception:
+                pass
             await websocket.send_text(json.dumps(response))
             break
         elif kind == "error":
+            try:
+                append_event(
+                    session_id,
+                    {
+                        "session_id": session_id,
+                        "ts": _now_iso(),
+                        "type": "error",
+                        "message": payload,
+                    },
+                )
+            except Exception:
+                pass
             await websocket.send_text(json.dumps({"type": "error", "message": payload}))
             break
 
@@ -229,6 +260,10 @@ def create_app() -> FastAPI:
     @app.get("/api/configs/active")
     async def active_config() -> JSONResponse:
         return JSONResponse({"active": get_active_config()})
+
+    @app.get("/api/sessions")
+    async def sessions() -> JSONResponse:
+        return JSONResponse({"sessions": list_sessions()})
 
     @app.post("/api/configs")
     async def create_config(request: Request) -> JSONResponse:
@@ -298,21 +333,43 @@ def create_app() -> FastAPI:
     @app.websocket("/ws/chat")
     async def chat(websocket: WebSocket) -> None:
         await websocket.accept()
+        session_id: str | None = None
         while True:
             try:
                 message = await websocket.receive_text()
             except WebSocketDisconnect:
                 break
             payload = parse_payload(message)
+            incoming_session_id = payload.get("session_id")
+            if incoming_session_id:
+                session_id = str(incoming_session_id)
+            if session_id is None:
+                session_id = new_session_id()
             question = str(payload.get("question", "")).strip()
             if not question:
                 await websocket.send_text(
                     json.dumps({"type": "error", "message": "Question is required."})
                 )
                 continue
+            ensure_session(session_id)
             history = coerce_history(payload.get("history"))
             return_sources = bool(payload.get("return_sources", True))
-            await _stream_answer(websocket, agent_manager, question, history, return_sources)
+            try:
+                append_event(
+                    session_id,
+                    {
+                        "session_id": session_id,
+                        "ts": _now_iso(),
+                        "type": "user",
+                        "content": question,
+                        "history": history,
+                    },
+                )
+            except Exception:
+                pass
+            await _stream_answer(
+                websocket, agent_manager, question, history, return_sources, session_id
+            )
 
     @app.get("/web-config.js")
     async def web_config(request: Request) -> Response:

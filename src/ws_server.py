@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Sequence, Tuple
 
 import websockets
@@ -10,11 +11,16 @@ from websockets.exceptions import ConnectionClosed
 from websockets.server import WebSocketServerProtocol
 
 from .rag import RAGAgent
+from .session_store import append_event, ensure_session, new_session_id
 from .types import RetrievedChunk
 from .utils import get_token_counter
 from .ws_protocol import coerce_history, parse_payload, serialize_chunk
 
 _TOKEN_COUNTER = get_token_counter()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _finalize_usage(usage: Dict[str, Any], answer: str) -> Dict[str, Any]:
@@ -39,6 +45,7 @@ async def _stream_answer(
     question: str,
     history: Sequence[Tuple[str, str]],
     return_sources: bool,
+    session_id: str,
 ) -> None:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
@@ -72,18 +79,47 @@ async def _stream_answer(
             elif kind == "done":
                 chunks = payload.get("chunks", [])
                 answer = "".join(answer_parts)
+                sources_payload = [serialize_chunk(chunk) for chunk in chunks] if return_sources else []
                 response: Dict[str, Any] = {
                     "type": "done",
                     "answer": answer,
+                    "session_id": session_id,
                 }
                 usage = payload.get("usage")
-                if usage:
-                    response["usage"] = _finalize_usage(usage, answer)
+                finalized_usage = _finalize_usage(usage, answer) if usage else None
+                if finalized_usage:
+                    response["usage"] = finalized_usage
                 if return_sources:
-                    response["sources"] = [serialize_chunk(chunk) for chunk in chunks]
+                    response["sources"] = sources_payload
+                try:
+                    append_event(
+                        session_id,
+                        {
+                            "session_id": session_id,
+                            "ts": _now_iso(),
+                            "type": "assistant",
+                            "content": answer,
+                            "sources": sources_payload,
+                            "usage": finalized_usage,
+                        },
+                    )
+                except Exception:
+                    pass
                 await websocket.send(json.dumps(response))
                 break
             elif kind == "error":
+                try:
+                    append_event(
+                        session_id,
+                        {
+                            "session_id": session_id,
+                            "ts": _now_iso(),
+                            "type": "error",
+                            "message": payload,
+                        },
+                    )
+                except Exception:
+                    pass
                 await websocket.send(json.dumps({"type": "error", "message": payload}))
                 break
         except ConnectionClosed:
@@ -91,6 +127,7 @@ async def _stream_answer(
 
 
 async def _handle_connection(websocket: WebSocketServerProtocol, agent: RAGAgent) -> None:
+    session_id: str | None = None
     async for message in websocket:
         if isinstance(message, bytes):
             try:
@@ -101,13 +138,32 @@ async def _handle_connection(websocket: WebSocketServerProtocol, agent: RAGAgent
                 )
                 continue
         payload = parse_payload(message)
+        incoming_session_id = payload.get("session_id")
+        if incoming_session_id:
+            session_id = str(incoming_session_id)
+        if session_id is None:
+            session_id = new_session_id()
         question = str(payload.get("question", "")).strip()
         if not question:
             await websocket.send(json.dumps({"type": "error", "message": "Question is required."}))
             continue
+        ensure_session(session_id)
         history = coerce_history(payload.get("history"))
         return_sources = bool(payload.get("return_sources", True))
-        await _stream_answer(websocket, agent, question, history, return_sources)
+        try:
+            append_event(
+                session_id,
+                {
+                    "session_id": session_id,
+                    "ts": _now_iso(),
+                    "type": "user",
+                    "content": question,
+                    "history": history,
+                },
+            )
+        except Exception:
+            pass
+        await _stream_answer(websocket, agent, question, history, return_sources, session_id)
 
 
 async def _serve(host: str, port: int) -> None:

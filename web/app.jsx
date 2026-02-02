@@ -384,6 +384,9 @@ function ChatPanel({ activeConfig }) {
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const [contextUsage, setContextUsage] = useState(null);
+  const [sessionId, setSessionId] = useState("");
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessions, setSessions] = useState([]);
   const pendingSourcesRef = useRef(null);
   const wsRef = useRef(null);
   const pendingQuestionRef = useRef(null);
@@ -403,6 +406,18 @@ function ChatPanel({ activeConfig }) {
     Number.isFinite(contextWindow) && Number.isFinite(usedTokens) && contextWindow > 0
       ? (usedTokens / contextWindow) * 100
       : null;
+  const loadSessions = async () => {
+    setSessionsLoading(true);
+    setError("");
+    try {
+      const data = await apiFetch("/api/sessions");
+      setSessions(data.sessions || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
   const inlineSourcesFromContent = (content) => {
     if (!content) return null;
     const marker = "Sources:";
@@ -520,6 +535,9 @@ function ChatPanel({ activeConfig }) {
             if (payload.usage) {
               setContextUsage(payload.usage);
             }
+            if (payload.session_id) {
+              setSessionId(String(payload.session_id));
+            }
             if (pendingQuestionRef.current) {
               setTurns((prev) => [
                 ...prev,
@@ -547,6 +565,10 @@ function ChatPanel({ activeConfig }) {
     };
   }, []);
 
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
   const sendMessage = () => {
     const question = input.trim();
     if (!question) {
@@ -565,70 +587,103 @@ function ChatPanel({ activeConfig }) {
     ]);
     pendingSourcesRef.current = null;
     wsRef.current.send(
-      JSON.stringify({ question, history: turns, return_sources: true })
+      JSON.stringify({
+        question,
+        history: turns,
+        return_sources: true,
+        session_id: sessionId || undefined,
+      })
     );
     setInput("");
   };
 
   return (
-    <div className="panel">
-      <h2>Chat Workspace</h2>
-      <p className="status">
-        {connected ? "Connected" : connecting ? "Connecting" : "Disconnected"} | Active KB:{" "}
-        {activeConfig?.name || "None"} | WS: {wsUrl || "Not set"} | Context:{" "}
-        {contextUsage
-          ? `${formatK(contextWindow)} total, ${formatPercent(usagePercent)} used`
-          : "N/A"}
-      </p>
-      {error && <div className="status">{error}</div>}
-      <div className="chat-window">
-        {messages.map((message, index) => (
-          <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
-            {(() => {
-              const inline = inlineSourcesFromContent(message.content);
-              const content = inline ? inline.text : message.content;
-              const sources = message.sources?.length
-                ? message.sources
-                : inline?.sources || [];
-              return (
-                <>
-                  {content || "..."}
-                  {sources.length > 0 && (
-                    <div className="sources">
-                      <div className="sources-title">Sources</div>
-                      <ul>
-                        {sources.slice(0, 5).map((source, idx) => (
-                          <li key={`${source.chunk_id}-${idx}`}>
-                            <span className="source-path">{source.source}</span>
-                            {source.chunk_id !== undefined && source.chunk_id !== null && (
-                              <span className="source-meta">chunk {source.chunk_id}</span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
+    <div className="chat-layout">
+      <div className="panel session-sidebar">
+        <div className="session-header">
+          <div>
+            <h2>Sessions</h2>
+            <p className="status">
+              {sessionsLoading ? "Loading sessions..." : "Local session history."}
+            </p>
           </div>
-        ))}
-        {!messages.length && (
-          <div className="message assistant">Ask a question to start.</div>
-        )}
+          <button className="secondary" onClick={loadSessions}>
+            Refresh
+          </button>
+        </div>
+        <div className="session-list">
+          {sessions.map((session) => (
+            <div key={session.session_id} className="session-item">
+              <div className="session-title">
+                {String(session.session_id || "").slice(0, 8) || "Session"}
+              </div>
+              <div className="session-meta">Updated: {session.updated_at || "Unknown"}</div>
+              <div className="session-meta">Events: {session.event_count ?? 0}</div>
+            </div>
+          ))}
+          {!sessions.length && <div className="session-empty">No sessions found.</div>}
+        </div>
       </div>
-      <div className="chat-input">
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Ask something from your knowledge base..."
-          onKeyDown={(event) => {
-            if (event.key === "Enter") sendMessage();
-          }}
-        />
-        <button className="primary" onClick={sendMessage} disabled={!connected}>
-          Send
-        </button>
+
+      <div className="panel chat-panel">
+        <h2>Chat Workspace</h2>
+        <p className="status">
+          {connected ? "Connected" : connecting ? "Connecting" : "Disconnected"} | Active KB:{" "}
+          {activeConfig?.name || "None"} | WS: {wsUrl || "Not set"} | Context:{" "}
+          {contextUsage
+            ? `${formatK(contextWindow)} total, ${formatPercent(usagePercent)} used`
+            : "N/A"}
+        </p>
+        {error && <div className="status">{error}</div>}
+        <div className="chat-window">
+          {messages.map((message, index) => (
+            <div key={`${message.role}-${index}`} className={`message ${message.role}`}>
+              {(() => {
+                const inline = inlineSourcesFromContent(message.content);
+                const content = inline ? inline.text : message.content;
+                const sources = message.sources?.length
+                  ? message.sources
+                  : inline?.sources || [];
+                return (
+                  <>
+                    {content || "..."}
+                    {sources.length > 0 && (
+                      <div className="sources">
+                        <div className="sources-title">Sources</div>
+                        <ul>
+                          {sources.slice(0, 5).map((source, idx) => (
+                            <li key={`${source.chunk_id}-${idx}`}>
+                              <span className="source-path">{source.source}</span>
+                              {source.chunk_id !== undefined && source.chunk_id !== null && (
+                                <span className="source-meta">chunk {source.chunk_id}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          ))}
+          {!messages.length && (
+            <div className="message assistant">Ask a question to start.</div>
+          )}
+        </div>
+        <div className="chat-input">
+          <input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder="Ask something from your knowledge base..."
+            onKeyDown={(event) => {
+              if (event.key === "Enter") sendMessage();
+            }}
+          />
+          <button className="primary" onClick={sendMessage} disabled={!connected}>
+            Send
+          </button>
+        </div>
       </div>
     </div>
   );

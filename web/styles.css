@@ -218,6 +218,73 @@ textarea {
   padding-right: 6px;
 }
 
+.chat-layout {
+  display: flex;
+  gap: 24px;
+  align-items: stretch;
+}
+
+.session-sidebar {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.session-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.session-item {
+  background: var(--surface-alt);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.session-title {
+  font-weight: 600;
+}
+
+.session-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.session-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: var(--surface-alt);
+}
+
+.chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-panel .chat-window {
+  flex: 1;
+  min-height: 0;
+}
+
 .message {
   padding: 14px 16px;
   border-radius: 16px;
@@ -302,6 +369,14 @@ textarea {
   .hero {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .chat-layout {
+    flex-direction: column;
+  }
+
+  .session-sidebar {
+    flex: 1;
   }
 
   .chat-window {
