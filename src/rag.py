@@ -141,3 +141,48 @@ class RAGAgent:
 
         meta = {"history_compressed": compressed, "session_reset": reset_session}
         return _iter_tokens(), reranked, usage, meta
+
+    def answer_stream_iterative(
+        self, question: str, history: Sequence[Tuple[str, str]] | None = None, batch_size: int = 5
+    ) -> Tuple[Iterable[str], Iterable[RetrievedChunk], Dict[str, int], Dict[str, bool]]:
+        """
+        使用迭代式检索的流式回答，减少内存使用
+        """
+        history = history or []
+        # 使用迭代式检索方法
+        retrieved_generator = self.retriever.retrieve_iterative(question, batch_size=batch_size)
+        
+        # 收集所有检索到的结果
+        all_retrieved = []
+        for batch_or_chunk in retrieved_generator:
+            if isinstance(batch_or_chunk, list):
+                all_retrieved.extend(batch_or_chunk)
+            else:
+                all_retrieved.append(batch_or_chunk)
+        
+        reranked = self.reranker.rerank(question, all_retrieved)
+        history_summary: str | None = None
+        prompt = self._build_prompt(question, history, reranked)
+        usage = self._estimate_usage(prompt)
+        compressed = False
+        reset_session = False
+        if self._over_context_limit(usage):
+            if history:
+                history_summary = self.summarize_history(history)
+                compressed = True
+                prompt = self._build_prompt(question, history, reranked, history_summary=history_summary)
+                usage = self._estimate_usage(prompt)
+        if self._over_context_limit(usage):
+            reset_session = True
+            history_summary = None
+            prompt = self._build_prompt(question, [], reranked)
+            usage = self._estimate_usage(prompt)
+        stream = self.llm.stream(prompt)
+
+        def _iter_tokens() -> Iterable[str]:
+            for chunk in stream:
+                if chunk.content:
+                    yield chunk.content
+
+        meta = {"history_compressed": compressed, "session_reset": reset_session}
+        return _iter_tokens(), reranked, usage, meta
