@@ -153,3 +153,75 @@ class HybridRetriever:
         fused.sort(key=lambda item: item.fused_score, reverse=True)
         deduped = self._deduplicate(fused)
         return deduped[: settings.top_k]
+
+    def retrieve_iterative(self, query: str, batch_size: int | None = None):
+        """
+        使用生成器逐步返回检索结果，减少内存占用
+        :param query: 查询字符串
+        :param batch_size: 批次大小，如果为None则返回单个结果
+        :yield: 单个 RetrievedChunk 或一批 RetrievedChunk
+        """
+        vector_scores = self._vector_search(query)
+        bm25_scores = self._bm25_search(query)
+
+        vector_norm = self._min_max_normalize(vector_scores)
+        bm25_norm = self._min_max_normalize(bm25_scores)
+
+        all_ids = set(vector_norm) | set(bm25_norm)
+        # 创建按分数排序的 ID 列表
+        scored_ids = []
+        for chunk_id in all_ids:
+            fused_score = (
+                settings.vector_weight * vector_norm.get(chunk_id, 0.0)
+                + settings.bm25_weight * bm2_norm.get(chunk_id, 0.0)
+            )
+            scored_ids.append((chunk_id, fused_score))
+        
+        # 按融合分数排序
+        scored_ids.sort(key=lambda x: x[1], reverse=True)
+
+        # 应用去重逻辑并按批次返回
+        seen_tokens = set()
+        yielded_count = 0
+        current_batch = []
+
+        for chunk_id, fused_score in scored_ids:
+            if yielded_count >= settings.top_k:
+                break
+                
+            record = self.records[chunk_id]
+            chunk = RetrievedChunk(
+                record=record,
+                fused_score=fused_score,
+                vector_score=vector_scores.get(chunk_id, 0.0),
+                bm25_score=bm25_scores.get(chunk_id, 0.0),
+            )
+
+            # 去重检查
+            tokens = frozenset(simple_tokenize(chunk.record.text))
+            is_duplicate = False
+            if settings.dedup_similarity_threshold > 0.0:
+                for existing_tokens in seen_tokens:
+                    if self._jaccard_similarity(tokens, existing_tokens) >= settings.dedup_similarity_threshold:
+                        is_duplicate = True
+                        break
+
+            if not is_duplicate:
+                seen_tokens.add(tokens)
+                
+                if batch_size is None:
+                    # 逐个返回
+                    yield chunk
+                    yielded_count += 1
+                else:
+                    # 批量返回
+                    current_batch.append(chunk)
+                    yielded_count += 1
+                    
+                    if len(current_batch) >= batch_size or yielded_count >= settings.top_k:
+                        yield current_batch
+                        current_batch = []
+        
+        # 如果还有剩余的批次未发送
+        if batch_size is not None and current_batch:
+            yield current_batch
