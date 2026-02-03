@@ -33,6 +33,10 @@ def _session_events_path(session_id: str) -> Path:
     return _sessions_dir() / f"{session_id}.jsonl"
 
 
+def _session_embeddings_path(session_id: str) -> Path:
+    return _sessions_dir() / f"{session_id}.emb.jsonl"
+
+
 def _get_lock(session_id: str) -> threading.Lock:
     with _LOCKS_GUARD:
         lock = _LOCKS.get(session_id)
@@ -64,6 +68,10 @@ def _load_metadata(session_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def get_metadata(session_id: str) -> Optional[Dict[str, Any]]:
+    return _load_metadata(session_id)
+
+
 def _build_metadata(session_id: str) -> Dict[str, Any]:
     now = _now_iso()
     return {
@@ -72,7 +80,9 @@ def _build_metadata(session_id: str) -> Dict[str, Any]:
         "created_at": now,
         "updated_at": now,
         "event_file": str(_session_events_path(session_id)),
+        "embedding_file": str(_session_embeddings_path(session_id)),
         "event_count": 0,
+        "embedding_count": 0,
         "offsets": [],
     }
 
@@ -142,3 +152,55 @@ def list_sessions() -> List[Dict[str, Any]]:
         )
     sessions.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
     return sessions
+
+
+def load_events(session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    metadata = _load_metadata(session_id)
+    if metadata is None:
+        return []
+    offsets: List[int] = list(metadata.get("offsets") or [])
+    if limit is not None and limit > 0:
+        offsets = offsets[-limit:]
+    events_path = _session_events_path(session_id)
+    if not events_path.exists():
+        return []
+    events: List[Dict[str, Any]] = []
+    try:
+        with events_path.open("rb") as handle:
+            for offset in offsets:
+                handle.seek(int(offset))
+                line = handle.readline()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                if isinstance(payload, dict):
+                    events.append(payload)
+    except OSError:
+        return []
+    return events
+
+
+def embeddings_path(session_id: str) -> Path:
+    return _session_embeddings_path(session_id)
+
+
+def append_embedding_record(session_id: str, record: Dict[str, Any]) -> int:
+    lock = _get_lock(session_id)
+    with lock:
+        metadata = _load_metadata(session_id)
+        if metadata is None:
+            metadata = _build_metadata(session_id)
+        path = _session_embeddings_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(record, ensure_ascii=False).encode("utf-8") + b"\n"
+        with path.open("ab") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.write(payload)
+        embedding_count = int(metadata.get("embedding_count") or 0) + 1
+        metadata["embedding_count"] = embedding_count
+        metadata["updated_at"] = _now_iso()
+        _atomic_write_json(_session_meta_path(session_id), metadata)
+        return embedding_count

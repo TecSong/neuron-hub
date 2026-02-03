@@ -380,7 +380,6 @@ function ChatPanel({ activeConfig }) {
   const [connecting, setConnecting] = useState(true);
   const [wsUrl, setWsUrl] = useState(WS_CANDIDATES[0] || "");
   const [messages, setMessages] = useState([]);
-  const [turns, setTurns] = useState([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const [contextUsage, setContextUsage] = useState(null);
@@ -389,7 +388,6 @@ function ChatPanel({ activeConfig }) {
   const [sessions, setSessions] = useState([]);
   const pendingSourcesRef = useRef(null);
   const wsRef = useRef(null);
-  const pendingQuestionRef = useRef(null);
   const formatPercent = (value) =>
     Number.isFinite(value) ? `${value.toFixed(1)}%` : "N/A";
   const formatK = (value) =>
@@ -538,13 +536,6 @@ function ChatPanel({ activeConfig }) {
             if (payload.session_id) {
               setSessionId(String(payload.session_id));
             }
-            if (pendingQuestionRef.current) {
-              setTurns((prev) => [
-                ...prev,
-                { question: pendingQuestionRef.current, answer: payload.answer },
-              ]);
-              pendingQuestionRef.current = null;
-            }
           }
           if (payload.type === "error") {
             setError(payload.message || "Server error.");
@@ -579,7 +570,6 @@ function ChatPanel({ activeConfig }) {
       return;
     }
     setError("");
-    pendingQuestionRef.current = question;
     setMessages((prev) => [
       ...prev,
       { role: "user", content: question },
@@ -589,7 +579,6 @@ function ChatPanel({ activeConfig }) {
     wsRef.current.send(
       JSON.stringify({
         question,
-        history: turns,
         return_sources: true,
         session_id: sessionId || undefined,
       })

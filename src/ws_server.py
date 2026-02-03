@@ -11,10 +11,11 @@ from websockets.exceptions import ConnectionClosed
 from websockets.server import WebSocketServerProtocol
 
 from .rag import RAGAgent
+from .session_history import append_turn_embedding, load_session_history
 from .session_store import append_event, ensure_session, new_session_id
 from .types import RetrievedChunk
 from .utils import get_token_counter
-from .ws_protocol import coerce_history, parse_payload, serialize_chunk
+from .ws_protocol import parse_payload, serialize_chunk
 
 _TOKEN_COUNTER = get_token_counter()
 
@@ -103,6 +104,7 @@ async def _stream_answer(
                             "usage": finalized_usage,
                         },
                     )
+                    append_turn_embedding(session_id, question, answer)
                 except Exception:
                     pass
                 await websocket.send(json.dumps(response))
@@ -148,7 +150,7 @@ async def _handle_connection(websocket: WebSocketServerProtocol, agent: RAGAgent
             await websocket.send(json.dumps({"type": "error", "message": "Question is required."}))
             continue
         ensure_session(session_id)
-        history = coerce_history(payload.get("history"))
+        history = load_session_history(session_id, question)
         return_sources = bool(payload.get("return_sources", True))
         try:
             append_event(
