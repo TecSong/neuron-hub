@@ -46,25 +46,6 @@ def _build_turn_text(question: str, answer: str) -> str:
     return f"User: {question}\nAssistant: {answer}"
 
 
-def _sync_embeddings_cache(session_id: str, turns: Sequence[Tuple[str, str]]) -> None:
-    metadata = get_metadata(session_id) or {}
-    existing_count = int(metadata.get("embedding_count") or 0)
-    if existing_count >= len(turns):
-        return
-    embeddings = OllamaEmbeddings(
-        model=settings.ollama_embed_model,
-        base_url=settings.ollama_base_url,
-    )
-    for idx in range(existing_count, len(turns)):
-        question, answer = turns[idx]
-        text = _build_turn_text(question, answer)
-        vector = embeddings.embed_query(text)
-        append_embedding_record(
-            session_id,
-            {"turn_index": idx, "text": text, "vector": vector},
-        )
-
-
 def append_turn_embedding(session_id: str, question: str, answer: str) -> None:
     text = _build_turn_text(question, answer)
     embeddings = OllamaEmbeddings(
@@ -125,7 +106,6 @@ def load_session_history(session_id: str, question: str) -> List[Tuple[str, str]
     turns = _build_turns(events)
     if not turns:
         return []
-    _sync_embeddings_cache(session_id, turns)
     recent_turns = turns[-settings.history_max_turns :]
     semantic_top_k = settings.session_semantic_top_k
     semantic_indices = _semantic_top_k_from_cache(question, session_id, semantic_top_k)
