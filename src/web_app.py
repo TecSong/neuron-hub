@@ -8,7 +8,7 @@ import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,6 +20,7 @@ from .config_store import get_active_config, load_store, save_store
 from .ingest import build_indexes
 from .session_history import append_turn_embedding, load_session_history
 from .session_store import append_event, ensure_session, list_sessions, new_session_id
+from .types import RetrievedChunk
 from .ws_protocol import parse_payload, serialize_chunk
 from .utils import get_token_counter
 
@@ -152,9 +153,11 @@ async def _get_json(request: Request) -> Dict[str, Any]:
 
 async def _stream_answer(
     websocket: WebSocket,
-    agent_manager: AgentManager,
+    stream: Any,
+    chunks: Sequence[RetrievedChunk],
+    usage: Dict[str, Any],
+    meta: Dict[str, Any],
     question: str,
-    history: list[tuple[str, str]],
     return_sources: bool,
     session_id: str,
 ) -> None:
@@ -164,14 +167,13 @@ async def _stream_answer(
 
     def _worker() -> None:
         try:
-            agent = agent_manager.get_agent()
-            stream, chunks, usage = agent.answer_stream(question, history=history)
             if return_sources:
-                loop.call_soon_threadsafe(queue.put_nowait, ("sources", chunks))
+                loop.call_soon_threadsafe(queue.put_nowait, ("sources", list(chunks)))
             for token in stream:
                 loop.call_soon_threadsafe(queue.put_nowait, ("token", token))
             loop.call_soon_threadsafe(
-                queue.put_nowait, ("done", {"chunks": chunks, "usage": usage})
+                queue.put_nowait,
+                ("done", {"chunks": list(chunks), "usage": usage, "meta": meta}),
             )
         except Exception as exc:
             loop.call_soon_threadsafe(queue.put_nowait, ("error", str(exc)))
@@ -192,6 +194,7 @@ async def _stream_answer(
             answer = "".join(answer_parts)
             sources_payload = [serialize_chunk(chunk) for chunk in chunks] if return_sources else []
             response: Dict[str, Any] = {"type": "done", "answer": answer}
+            meta = payload.get("meta") or {}
             usage = payload.get("usage")
             finalized_usage = _finalize_usage(usage, answer) if usage else None
             if finalized_usage:
@@ -199,6 +202,10 @@ async def _stream_answer(
             if return_sources:
                 response["sources"] = sources_payload
             response["session_id"] = session_id
+            if meta.get("history_compressed"):
+                response["history_compressed"] = True
+            if meta.get("session_reset"):
+                response["session_reset"] = True
             try:
                 append_event(
                     session_id,
@@ -356,6 +363,24 @@ def create_app() -> FastAPI:
             ensure_session(session_id)
             history = load_session_history(session_id, question)
             return_sources = bool(payload.get("return_sources", True))
+            agent = agent_manager.get_agent()
+            stream, chunks, usage, meta = agent.answer_stream(question, history=history)
+            if meta.get("session_reset"):
+                old_session_id = session_id
+                session_id = new_session_id()
+                ensure_session(session_id)
+                try:
+                    append_event(
+                        old_session_id,
+                        {
+                            "session_id": old_session_id,
+                            "ts": _now_iso(),
+                            "type": "reset",
+                            "new_session_id": session_id,
+                        },
+                    )
+                except Exception:
+                    pass
             try:
                 append_event(
                     session_id,
@@ -370,7 +395,14 @@ def create_app() -> FastAPI:
             except Exception:
                 pass
             await _stream_answer(
-                websocket, agent_manager, question, history, return_sources, session_id
+                websocket,
+                stream,
+                chunks,
+                usage,
+                meta,
+                question,
+                return_sources,
+                session_id,
             )
 
     @app.get("/web-config.js")

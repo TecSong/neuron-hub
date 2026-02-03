@@ -89,6 +89,7 @@ class Settings:
     history_max_turns: int
     session_semantic_top_k: int
     session_semantic_max_events: int
+    session_summary_max_tokens: int
     supported_extensions: tuple[str, ...]
 
     @classmethod
@@ -185,6 +186,7 @@ class Settings:
             history_max_turns=_get_env_int("HISTORY_MAX_TURNS", 5),
             session_semantic_top_k=_get_env_int("SESSION_SEMANTIC_TOP_K", 6),
             session_semantic_max_events=_get_env_int("SESSION_SEMANTIC_MAX_EVENTS", 200),
+            session_summary_max_tokens=_get_env_int("SESSION_SUMMARY_MAX_TOKENS", 256),
             supported_extensions=(".txt", ".md"),
         )
 

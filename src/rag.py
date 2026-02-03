@@ -63,9 +63,10 @@ class RAGAgent:
         question: str,
         history: Sequence[Tuple[str, str]],
         reranked: List[RetrievedChunk],
+        history_summary: str | None = None,
     ) -> str:
         context = _format_context(reranked)
-        history_text = _format_history(history)
+        history_text = history_summary if history_summary is not None else _format_history(history)
         return (
             f"{SYSTEM_PROMPT}\n\n"
             f"Context:\n{context}\n\n"
@@ -85,6 +86,22 @@ class RAGAgent:
             "remaining_tokens": int(remaining),
         }
 
+    def _over_context_limit(self, usage: Dict[str, int]) -> bool:
+        return usage["prompt_tokens"] + usage["max_output_tokens"] > usage["context_window_tokens"]
+
+    def summarize_history(self, history: Sequence[Tuple[str, str]]) -> str:
+        history_text = _format_history(history)
+        if not history_text:
+            return ""
+        prompt = (
+            "Summarize the following conversation in a concise, factual way. "
+            "Preserve key decisions, constraints, and named entities. "
+            f"Limit to {settings.session_summary_max_tokens} tokens.\n\n"
+            f"{history_text}\n\nSummary:"
+        )
+        response = self.llm.invoke(prompt)
+        return response.content.strip()
+
     def answer(self, question: str, history: Sequence[Tuple[str, str]] | None = None) -> RAGResponse:
         history = history or []
         retrieved = self.retriever.retrieve(question)
@@ -95,12 +112,26 @@ class RAGAgent:
 
     def answer_stream(
         self, question: str, history: Sequence[Tuple[str, str]] | None = None
-    ) -> Tuple[Iterable[str], List[RetrievedChunk], Dict[str, int]]:
+    ) -> Tuple[Iterable[str], List[RetrievedChunk], Dict[str, int], Dict[str, bool]]:
         history = history or []
         retrieved = self.retriever.retrieve(question)
         reranked = self.reranker.rerank(question, retrieved)
+        history_summary: str | None = None
         prompt = self._build_prompt(question, history, reranked)
         usage = self._estimate_usage(prompt)
+        compressed = False
+        reset_session = False
+        if self._over_context_limit(usage):
+            if history:
+                history_summary = self.summarize_history(history)
+                compressed = True
+                prompt = self._build_prompt(question, history, reranked, history_summary=history_summary)
+                usage = self._estimate_usage(prompt)
+        if self._over_context_limit(usage):
+            reset_session = True
+            history_summary = None
+            prompt = self._build_prompt(question, [], reranked)
+            usage = self._estimate_usage(prompt)
         stream = self.llm.stream(prompt)
 
         def _iter_tokens() -> Iterable[str]:
@@ -108,4 +139,5 @@ class RAGAgent:
                 if chunk.content:
                     yield chunk.content
 
-        return _iter_tokens(), reranked, usage
+        meta = {"history_compressed": compressed, "session_reset": reset_session}
+        return _iter_tokens(), reranked, usage, meta

@@ -40,7 +40,7 @@ def handle_ingest() -> int:
 
 def handle_query(question: str) -> int:
     agent = RAGAgent()
-    stream, chunks, _ = agent.answer_stream(question)
+    stream, chunks, _, _ = agent.answer_stream(question)
     _emit_stream(stream)
     print()
     print(_format_sources(chunks))
@@ -61,7 +61,7 @@ def handle_chat() -> int:
             break
         if not question:
             continue
-        stream, chunks, _ = agent.answer_stream(
+        stream, chunks, _, _ = agent.answer_stream(
             question, history=history[-settings.history_max_turns :]
         )
         answer = _emit_stream(stream)

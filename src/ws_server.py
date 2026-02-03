@@ -42,9 +42,11 @@ def _finalize_usage(usage: Dict[str, Any], answer: str) -> Dict[str, Any]:
 
 async def _stream_answer(
     websocket: WebSocketServerProtocol,
-    agent: RAGAgent,
+    stream: Any,
+    chunks: Sequence[RetrievedChunk],
+    usage: Dict[str, Any],
+    meta: Dict[str, Any],
     question: str,
-    history: Sequence[Tuple[str, str]],
     return_sources: bool,
     session_id: str,
 ) -> None:
@@ -54,13 +56,13 @@ async def _stream_answer(
 
     def _worker() -> None:
         try:
-            stream, chunks, usage = agent.answer_stream(question, history=history)
             if return_sources:
-                loop.call_soon_threadsafe(queue.put_nowait, ("sources", chunks))
+                loop.call_soon_threadsafe(queue.put_nowait, ("sources", list(chunks)))
             for token in stream:
                 loop.call_soon_threadsafe(queue.put_nowait, ("token", token))
             loop.call_soon_threadsafe(
-                queue.put_nowait, ("done", {"chunks": chunks, "usage": usage})
+                queue.put_nowait,
+                ("done", {"chunks": list(chunks), "usage": usage, "meta": meta}),
             )
         except Exception as exc:  # pragma: no cover - defensive
             loop.call_soon_threadsafe(queue.put_nowait, ("error", str(exc)))
@@ -86,12 +88,17 @@ async def _stream_answer(
                     "answer": answer,
                     "session_id": session_id,
                 }
+                meta = payload.get("meta") or {}
                 usage = payload.get("usage")
                 finalized_usage = _finalize_usage(usage, answer) if usage else None
                 if finalized_usage:
                     response["usage"] = finalized_usage
                 if return_sources:
                     response["sources"] = sources_payload
+                if meta.get("history_compressed"):
+                    response["history_compressed"] = True
+                if meta.get("session_reset"):
+                    response["session_reset"] = True
                 try:
                     append_event(
                         session_id,
@@ -152,6 +159,23 @@ async def _handle_connection(websocket: WebSocketServerProtocol, agent: RAGAgent
         ensure_session(session_id)
         history = load_session_history(session_id, question)
         return_sources = bool(payload.get("return_sources", True))
+        stream, chunks, usage, meta = agent.answer_stream(question, history=history)
+        if meta.get("session_reset"):
+            old_session_id = session_id
+            session_id = new_session_id()
+            ensure_session(session_id)
+            try:
+                append_event(
+                    old_session_id,
+                    {
+                        "session_id": old_session_id,
+                        "ts": _now_iso(),
+                        "type": "reset",
+                        "new_session_id": session_id,
+                    },
+                )
+            except Exception:
+                pass
         try:
             append_event(
                 session_id,
@@ -165,7 +189,16 @@ async def _handle_connection(websocket: WebSocketServerProtocol, agent: RAGAgent
             )
         except Exception:
             pass
-        await _stream_answer(websocket, agent, question, history, return_sources, session_id)
+        await _stream_answer(
+            websocket,
+            stream,
+            chunks,
+            usage,
+            meta,
+            question,
+            return_sources,
+            session_id,
+        )
 
 
 async def _serve(host: str, port: int) -> None:
